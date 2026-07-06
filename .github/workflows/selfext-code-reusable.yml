@@ -1,0 +1,107 @@
+# .github/workflows/selfext-code-reusable.yml
+#
+# mallcop self-extension — CODE lane (reusable workflow, mallcop-owned).
+#
+# All orchestration logic for the CODE lane lives here so it can be upgraded
+# centrally (one SHA bump in every fork's thin caller). It runs the SAME
+# `mallcop-ops selfext --run` binary the operator runs locally, inside a pinned
+# container on an ephemeral runner. It authors ONE add-only detector, runs the
+# in-runner gate, and on GREEN opens a review PR under the operator's identity.
+# It NEVER pushes to main and NEVER merges.
+#
+# mallcop-selfext-template: v1   (rd mallcoppro-98e)
+name: mallcop self-extension code lane (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      detector_id: { type: string, required: true }
+      event_type: { type: string, required: true }
+      target_family: { type: string, required: false }
+      rail: { type: string, required: false, default: donut-byoi }
+      budget_usd: { type: string, required: false, default: "2.00" }
+      base_url: { type: string, required: true }
+      consent: { type: string, required: false, default: "false" }
+    secrets:
+      inference_key: { required: true }
+      byoi_url: { required: false }
+
+# Author job least-privilege: it can push a proposal branch + open a PR in the
+# caller's fork, and NOTHING else. It cannot merge (branch protection) and holds
+# no admin / bot / cross-repo credential.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  author:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20            # HARD wall-clock money/egress backstop
+    container:
+      # ghcr.io/3dl-dev/selfext-runner@sha256:<DIGEST> bakes opencode (pinned,
+      # checksum-verified, --ignore-scripts, autoupdate/telemetry off), mallcop +
+      # mallcop-ops from the SHA-256-verified release tarball, and the Go toolchain.
+      # Published by .github/workflows/publish-selfext-runner.yml (W1, mallcoppro-75e);
+      # re-pin here on every publish run — the digest changes whenever
+      # cmd/mallcop-ops/** or infra/gha-runner/** changes (mallcoppro-7ee7 found this
+      # pin one publish-run stale: it still pointed at the pre-autonomy-dial image).
+      image: ghcr.io/3dl-dev/selfext-runner@sha256:0a49c1f1fcd44fd2c6f334282cd6b6a4784fb7bd51639558a1bedc3bc938f852
+    env:
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+      OPENCODE_TELEMETRY_DISABLED: "1"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4 — pinned by SHA (mallcoppro-7ee7)
+        with:
+          egress-policy: block
+          disable-sudo: true
+          allowed-endpoints: >
+            mallcop.app:443
+            api.mallcop.app:443
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            proxy.golang.org:443
+            sum.golang.org:443
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
+        with:
+          fetch-depth: 0          # the gate needs base..HEAD
+      - name: author + in-runner gate (never merges)
+        id: drive
+        env:
+          INFERENCE_KEY: ${{ secrets.inference_key }}
+          INFERENCE_URL: ${{ secrets.byoi_url }}
+        run: |
+          set -euo pipefail
+          # The whole drive IS the binary you already ship. The inference key reaches
+          # the binary ONLY as $INFERENCE_KEY (read via --inference-key-env), so it
+          # never appears in argv. resolveInferenceMode is a hard XOR — you cannot
+          # half-configure into an uncapped run.
+          #
+          # Both rails run through BYOI mode (endpoint+key), which SKIPS the stream
+          # shim by default. The donut-byoi endpoint is mallcop.app — Forge-fronted,
+          # so it hard-501s opencode's unconditional streaming. --stream-shim fronts
+          # it with the loopback stream→non-stream bridge. A true byoi endpoint (real
+          # Anthropic) streams natively, so it leaves the shim off.
+          if [ "${{ inputs.rail }}" = "byoi" ]; then
+            RAIL_ARGS=(--inference-url "$INFERENCE_URL" --inference-key-env INFERENCE_KEY)
+          else
+            RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim)
+          fi
+          mallcop-ops selfext --run \
+            --target-repo "$PWD" --base-ref HEAD \
+            --detector-id "${{ inputs.detector_id }}" \
+            --event-type "${{ inputs.event_type }}" \
+            --target-family "${{ inputs.target_family }}" \
+            "${RAIL_ARGS[@]}" \
+            --artifact-dir "$RUNNER_TEMP/proposals" \
+            --budget-usd "${{ inputs.budget_usd }}" \
+            --validate-bin mallcop
+      - name: open review PR (operator identity, never auto-merge)
+        if: steps.drive.outputs.proposed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # open-proposal-pr.sh ships in the pinned runner image (W4). It turns a GREEN
+        # artifact into a PR via the native GITHUB_TOKEN (operator identity), opens NO
+        # PR on RED, and calls NO `gh pr merge`.
+        run: bash /opt/mallcop/open-proposal-pr.sh "$RUNNER_TEMP/proposals" "${{ inputs.consent }}"
