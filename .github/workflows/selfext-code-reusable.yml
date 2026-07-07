@@ -38,13 +38,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20            # HARD wall-clock money/egress backstop
     container:
-      # ghcr.io/3dl-dev/selfext-runner@sha256:<DIGEST> bakes opencode (pinned,
+      # ghcr.io/mallcop-app/selfext-runner@sha256:<DIGEST> bakes opencode (pinned,
       # checksum-verified, --ignore-scripts, autoupdate/telemetry off), mallcop +
-      # mallcop-ops from the SHA-256-verified release tarball, and the Go toolchain.
-      # Published by .github/workflows/publish-selfext-runner.yml (W1, mallcoppro-75e);
-      # re-pin here on every publish run — the digest changes whenever
-      # cmd/mallcop-ops/** or infra/gha-runner/** changes (mallcoppro-7ee7 found this
-      # pin one publish-run stale: it still pointed at the pre-autonomy-dial image).
+      # mallcop-ops from their SHA-256-verified PUBLIC release tarballs, the bundled
+      # config, and the Go toolchain. Built entirely from public downloads, so it
+      # publishes under mallcop-app with the repo's own token (.github/workflows/
+      # publish-runner.yml, no cross-org credential). Re-pin this digest on every
+      # publish run — it changes whenever the runner sources or mallcop-ops change.
       image: ghcr.io/mallcop-app/selfext-runner@sha256:353ac3fdbf1be009f03aa3002b8df109a4581543b2b78ba3f4a24c2cf31ab591
     env:
       OPENCODE_DISABLE_AUTOUPDATE: "1"
