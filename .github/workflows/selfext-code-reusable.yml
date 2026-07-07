@@ -74,6 +74,10 @@ jobs:
           INFERENCE_URL: ${{ secrets.byoi_url }}
         run: |
           set -euo pipefail
+          # The runner container runs as root while the checkout is owned by the
+          # runner uid — git refuses ("dubious ownership") until the workspace is
+          # marked safe. mallcop-ops does git ops (worktree jail + gate diff).
+          git config --global --add safe.directory "$PWD"
           # The whole drive IS the binary you already ship. The inference key reaches
           # the binary ONLY as $INFERENCE_KEY (read via --inference-key-env), so it
           # never appears in argv. resolveInferenceMode is a hard XOR — you cannot
