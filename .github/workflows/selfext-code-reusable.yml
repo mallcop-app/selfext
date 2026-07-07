@@ -68,6 +68,7 @@ jobs:
           fetch-depth: 0          # the gate needs base..HEAD
       - name: author + in-runner gate (never merges)
         id: drive
+        shell: bash            # RAIL_ARGS is a bash array — the container's default sh (dash) chokes
         env:
           INFERENCE_KEY: ${{ secrets.inference_key }}
           INFERENCE_URL: ${{ secrets.byoi_url }}
