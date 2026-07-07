@@ -45,7 +45,7 @@ jobs:
       # re-pin here on every publish run — the digest changes whenever
       # cmd/mallcop-ops/** or infra/gha-runner/** changes (mallcoppro-7ee7 found this
       # pin one publish-run stale: it still pointed at the pre-autonomy-dial image).
-      image: ghcr.io/3dl-dev/selfext-runner@sha256:0a49c1f1fcd44fd2c6f334282cd6b6a4784fb7bd51639558a1bedc3bc938f852
+      image: ghcr.io/mallcop-app/selfext-runner:v1
     env:
       OPENCODE_DISABLE_AUTOUPDATE: "1"
       OPENCODE_TELEMETRY_DISABLED: "1"
@@ -84,12 +84,19 @@ jobs:
           # it with the loopback stream→non-stream bridge. A true byoi endpoint (real
           # Anthropic) streams natively, so it leaves the shim off.
           if [ "${{ inputs.rail }}" = "byoi" ]; then
+            # A true BYOI endpoint (e.g. real Anthropic) streams natively and its
+            # own strong model authors; leave the shim off and don't override.
             RAIL_ARGS=(--inference-url "$INFERENCE_URL" --inference-key-env INFERENCE_KEY)
           else
-            RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim)
+            # donut-byoi: base_url is mallcop.app — Forge-fronted (non-streaming), so
+            # --stream-shim bridges opencode's unconditional streaming; and it
+            # recognizes catalog ids, so pin the STRONG Go-capable coder explicitly
+            # (the bare heal lane resolves to a flash model that plans but never writes).
+            RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim --code-model glm-5.2@deepinfra)
           fi
           mallcop-ops selfext --run \
             --target-repo "$PWD" --base-ref HEAD \
+            --config-dir /opt/mallcop/config \
             --detector-id "${{ inputs.detector_id }}" \
             --event-type "${{ inputs.event_type }}" \
             --target-family "${{ inputs.target_family }}" \
