@@ -45,7 +45,7 @@ jobs:
       # re-pin here on every publish run — the digest changes whenever
       # cmd/mallcop-ops/** or infra/gha-runner/** changes (mallcoppro-7ee7 found this
       # pin one publish-run stale: it still pointed at the pre-autonomy-dial image).
-      image: ghcr.io/mallcop-app/selfext-runner:v1
+      image: ghcr.io/mallcop-app/selfext-runner@sha256:353ac3fdbf1be009f03aa3002b8df109a4581543b2b78ba3f4a24c2cf31ab591
     env:
       OPENCODE_DISABLE_AUTOUPDATE: "1"
       OPENCODE_TELEMETRY_DISABLED: "1"
