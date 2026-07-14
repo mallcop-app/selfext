@@ -27,7 +27,7 @@ ENV OPENCODE_DISABLE_AUTOUPDATE=1 \
 # node 24 + gh, then opencode pinned. --ignore-scripts blocks every dependency's
 # install scripts; we then run ONLY opencode's own vetted postinstall.mjs, which
 # fetches the pinned platform binary (opencode is non-functional without it).
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git gnupg \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git gnupg jq \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -55,7 +55,15 @@ RUN curl -fsSLO "https://github.com/mallcop-app/mallcop/releases/download/${MALL
     && install -m0755 bin/mallcop /usr/local/bin/mallcop \
     && rm -rf mallcop-linux-amd64* bin
 
+# Operator-identity PR openers: the authoring-run opener (open-proposal-pr.sh) and
+# the CODE-lane contribute-back opener (open-contribback-code-pr.sh). Both push
+# under the operator's OWN token and call NO `gh pr merge` — the required exam
+# check / OSS review gate every merge.
 COPY infra/open-proposal-pr.sh /opt/mallcop/open-proposal-pr.sh
-RUN chmod +x /opt/mallcop/open-proposal-pr.sh \
-    && mallcop-ops selfext -h >/dev/null 2>&1 || true \
+COPY infra/open-contribback-code-pr.sh /opt/mallcop/open-contribback-code-pr.sh
+RUN chmod +x /opt/mallcop/open-proposal-pr.sh /opt/mallcop/open-contribback-code-pr.sh
+# Hard build-time proof jq is on PATH — the reusable workflow's dial-gated
+# auto-merge step guards on `command -v jq` and fail-safes to WITHHELD without it.
+RUN command -v jq >/dev/null || { echo "FATAL: jq missing from the runner image" >&2; exit 1; }
+RUN mallcop-ops selfext -h >/dev/null 2>&1 || true \
     && opencode --version

@@ -76,10 +76,21 @@ BODY_FILE="$(mktemp)"
   echo "_The redacted authoring transcript is in the run artifact._"
 } > "$BODY_FILE"
 
-gh pr create \
+PR_URL="$(gh pr create \
   --title "selfext: authored detector ${DETECTOR} (machine-authored, human-gated)" \
   --body-file "$BODY_FILE" \
   --label "selfext/proposal" \
-  --head "$BRANCH"
+  --head "$BRANCH")"
 
-echo "open-proposal-pr: opened review PR for ${DETECTOR} on ${BRANCH} (never merged)."
+# Publish the opened PR number so the reusable workflow's dial-gated auto-merge
+# step can target THIS PR (it reads steps.openpr.outputs.pr_number). The number is
+# the trailing path segment of the PR URL gh prints. FAIL-SAFE: if no number is
+# parseable — or this runs outside Actions ($GITHUB_OUTPUT unset) — we emit
+# nothing, and the auto-merge step withholds (it treats an empty PR_NUMBER as a
+# reason to leave the PR for a human). We NEVER merge here.
+PR_NUMBER="$(printf '%s\n' "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+' | tail -n1 || true)"
+if [ -n "${GITHUB_OUTPUT:-}" ] && [ -n "${PR_NUMBER}" ]; then
+  printf 'pr_number=%s\n' "${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+fi
+
+echo "open-proposal-pr: opened review PR #${PR_NUMBER:-?} for ${DETECTOR} on ${BRANCH} (never merged)."
