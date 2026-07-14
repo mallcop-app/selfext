@@ -7,7 +7,25 @@
 # `mallcop-ops selfext --run` binary the operator runs locally, inside a pinned
 # container on an ephemeral runner. It authors ONE add-only detector, runs the
 # in-runner gate, and on GREEN opens a review PR under the operator's identity.
-# It NEVER pushes to main and NEVER merges.
+# It NEVER pushes to main directly. It merges ONLY by ENABLING GitHub
+# auto-merge — and only when the operator's OWN mallcop.yaml sets
+# learning.autonomy: fully AND the gate reported no novel-gap family — which
+# still requires the repo's required exam check + branch protection to pass, so
+# the gate is never bypassed. The autonomy dial is read from the repo's config
+# file, NEVER a workflow input (R3 + R5): a web-lane dispatch cannot escalate it.
+#
+# CODE-lane contribute-back (rd mallcoppro-59e): a SEPARATE, follow-up dispatch
+# (promote_detector != '') proposes an ALREADY-MERGED customer authored detector
+# (detectors/<name>/) for promotion into the shared OSS corpus
+# (core/detect/authored/<name>/). It is the code-lane analogue of the DATA lane's
+# oss-pr artifact — the gap rd mallcoppro-e7f flagged (the code lane had no
+# artifact at all). It is triple-gated and NEVER merges: (1) the operator's OWN
+# mallcop.yaml learning.contribute_back must be true (read from the checkout, never
+# a workflow input — same fail-safe parse as the autonomy dial); (2) the detector
+# must actually be present on the default branch (proof its PR merged); (3) the
+# upstream PR is opened under the OPERATOR's OWN token (secrets.oss_contrib_token) —
+# mallcop-pro holds no OSS write credential (R8) — and the job calls NO `gh pr merge`
+# at any dial: the OSS repo's own exam.yml + CODEOWNERS review gate the merge (R3).
 #
 # mallcop-selfext-template: v1   (rd mallcoppro-98e)
 name: mallcop self-extension code lane (reusable)
@@ -22,9 +40,19 @@ on:
       budget_usd: { type: string, required: false, default: "2.00" }
       base_url: { type: string, required: true }
       consent: { type: string, required: false, default: "false" }
+      # CODE-lane contribute-back: name an already-merged authored detector to
+      # propose upstream. Empty (the default) => the normal authoring run; the
+      # contribute_back job is skipped. This is NOT the consent knob (that is
+      # read from mallcop.yaml, never an input) — only WHICH detector to promote.
+      promote_detector: { type: string, required: false, default: "" }
+      oss_repo: { type: string, required: false, default: mallcop-app/mallcop }
     secrets:
       inference_key: { required: true }
       byoi_url: { required: false }
+      # The OPERATOR's OWN token for the upstream OSS PR (R8: mallcop-pro holds no
+      # OSS write credential). Absent => contribute-back cannot open a PR (fail-safe
+      # skip). NEVER a merge credential — the job calls no `gh pr merge`.
+      oss_contrib_token: { required: false }
 
 # Author job least-privilege: it can push a proposal branch + open a PR in the
 # caller's fork, and NOTHING else. It cannot merge (branch protection) and holds
@@ -35,8 +63,15 @@ permissions:
 
 jobs:
   author:
+    # The authoring run is the DEFAULT path. On a follow-up contribute-back dispatch
+    # (promote_detector set) there is nothing to author — skip it so a promote never
+    # spends money re-authoring.
+    if: inputs.promote_detector == ''
     runs-on: ubuntu-latest
     timeout-minutes: 20            # HARD wall-clock money/egress backstop
+    defaults:
+      run:
+        shell: bash               # the runner container's default sh (dash) chokes on `set -o pipefail` + the RAIL_ARGS bash array
     container:
       # ghcr.io/mallcop-app/selfext-runner@sha256:<DIGEST> bakes opencode (pinned,
       # checksum-verified, --ignore-scripts, autoupdate/telemetry off), mallcop +
@@ -45,7 +80,7 @@ jobs:
       # publishes under mallcop-app with the repo's own token (.github/workflows/
       # publish-runner.yml, no cross-org credential). Re-pin this digest on every
       # publish run — it changes whenever the runner sources or mallcop-ops change.
-      image: ghcr.io/mallcop-app/selfext-runner@sha256:353ac3fdbf1be009f03aa3002b8df109a4581543b2b78ba3f4a24c2cf31ab591
+      image: ghcr.io/mallcop-app/selfext-runner@sha256:58e679b83e52c958e730b08a04bfee279c6bd05892fd9a6e53019e85011c9a73
     env:
       OPENCODE_DISABLE_AUTOUPDATE: "1"
       OPENCODE_TELEMETRY_DISABLED: "1"
@@ -66,9 +101,33 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
         with:
           fetch-depth: 0          # the gate needs base..HEAD
+      - name: verify egress jail (fail-closed live proof)   # mallcoppro-6c4
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          set -euo pipefail
+          # LIVE proof that the runner-level egress jail (harden-runner egress-policy:
+          # block) actually DROPS a planted call to a host outside the allowlist, and
+          # that the configured inference endpoint is still reachable. This is the
+          # coarse HOST-level layer; the fine, OS-enforced per-process layer is the
+          # Landlock jail mallcop-ops applies to the opencode child (mallcoppro-6c4).
+          # FAIL-CLOSED: if the planted call is NOT blocked (egress not enforced) or
+          # the inference endpoint cannot be reached, we exit non-zero and author
+          # NOTHING rather than run under a jail we could not prove.
+          echo "egress-jail: planting a disallowed call to https://example.com ..."
+          if curl -sS --max-time 8 -o /dev/null https://example.com; then
+            echo "FATAL: egress to a non-allowlisted host SUCCEEDED — egress jail not enforced" >&2
+            exit 1
+          fi
+          echo "egress-jail: OK — disallowed egress was blocked"
+          echo "egress-jail: confirming the inference endpoint is reachable: $BASE_URL"
+          if ! curl -sS --max-time 10 -o /dev/null "$BASE_URL"; then
+            echo "FATAL: inference endpoint $BASE_URL is unreachable through the egress jail" >&2
+            exit 1
+          fi
+          echo "egress-jail: OK — inference endpoint reachable; jail proven"
       - name: author + in-runner gate (never merges)
         id: drive
-        shell: bash            # RAIL_ARGS is a bash array — the container's default sh (dash) chokes
         env:
           INFERENCE_KEY: ${{ secrets.inference_key }}
           INFERENCE_URL: ${{ secrets.byoi_url }}
@@ -76,7 +135,7 @@ jobs:
           set -euo pipefail
           # The runner container runs as root while the checkout is owned by the
           # runner uid — git refuses ("dubious ownership") until the workspace is
-          # marked safe. mallcop-ops does git ops (worktree jail + gate diff).
+          # marked safe. mallcop-ops does git ops (worktree jail + gate diff) on it.
           git config --global --add safe.directory "$PWD"
           # The whole drive IS the binary you already ship. The inference key reaches
           # the binary ONLY as $INFERENCE_KEY (read via --inference-key-env), so it
@@ -109,11 +168,187 @@ jobs:
             --artifact-dir "$RUNNER_TEMP/proposals" \
             --budget-usd "${{ inputs.budget_usd }}" \
             --validate-bin mallcop
-      - name: open review PR (operator identity, never auto-merge)
+      - name: read autonomy dial (operator config file, never a workflow input)   # mallcoppro-101 (R3 + R5)
+        id: autonomy
+        if: steps.drive.outputs.proposed == 'true'
+        run: |
+          set -euo pipefail
+          # The autonomy dial is OPERATOR-OWNED and read ONLY from the checked-out
+          # repo's mallcop.yaml — a CODEOWNERS/guard-protected file the loop never
+          # writes (design R5). It is DELIBERATELY NOT a workflow input: no
+          # workflow_dispatch / workflow_call input carries autonomy, so a web-lane
+          # dispatch (POST /api/selfext) can never escalate it (R3 — the operator
+          # owns their own blast radius). Fail-safe parse MIRRORS autonomy.Parse:
+          # an absent file, an absent key, or ANY value other than the three known
+          # spellings (non | semi | fully) => "non" — never a silent auto-apply.
+          dial=non
+          if [ -f mallcop.yaml ]; then
+            # grep-strict for the single learning.autonomy scalar. The leading
+            # indentation requires it be a nested key (never a top-level one), and
+            # the alternation admits only the three known tokens; anything else
+            # falls through to the fail-safe below.
+            raw=$(grep -E '^[[:space:]]+autonomy:[[:space:]]*"?(non|semi|fully)"?[[:space:]]*(#.*)?$' mallcop.yaml \
+                    | head -n1 | sed -E 's/^[[:space:]]+autonomy:[[:space:]]*"?([a-z]+)"?.*$/\1/' || true)
+            case "$raw" in
+              non|semi|fully) dial="$raw" ;;
+              *)              dial=non    ;;   # unknown / absent => fail-safe
+            esac
+          fi
+          echo "selfext: autonomy dial = ${dial} (from mallcop.yaml, fail-safe to non)"
+          echo "dial=${dial}" >> "$GITHUB_OUTPUT"
+      - name: open review PR (operator identity)
+        id: openpr
         if: steps.drive.outputs.proposed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         # open-proposal-pr.sh ships in the pinned runner image (W4). It turns a GREEN
         # artifact into a PR via the native GITHUB_TOKEN (operator identity), opens NO
-        # PR on RED, and calls NO `gh pr merge`.
+        # PR on RED, and calls NO `gh pr merge` itself. It writes `pr_number=<n>` to
+        # $GITHUB_OUTPUT so the dial-gated auto-merge step below can target the PR it
+        # just opened (fail-safe: if no number is emitted, auto-merge is withheld).
         run: bash /opt/mallcop/open-proposal-pr.sh "$RUNNER_TEMP/proposals" "${{ inputs.consent }}"
+      - name: enable auto-merge — config dial=fully AND no novel gap (never bypasses the gate)   # mallcoppro-101
+        if: steps.drive.outputs.proposed == 'true' && steps.autonomy.outputs.dial == 'fully'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_PATH: ${{ steps.drive.outputs.artifact_path }}
+          PR_NUMBER: ${{ steps.openpr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # We reach this step ONLY because the operator's OWN mallcop.yaml set
+          # learning.autonomy: fully (config-file-only; never a workflow input, so a
+          # web-lane dispatch can never get here). Two hard gates still stand between
+          # here and an actual merge:
+          #
+          #   1. NOVEL-GAP (dial-independent): if the GREEN gate's STRUCTURED
+          #      novel_gap_families JSON field is non-empty, the reference corpus has
+          #      ZERO labeled coverage for that family, so the gate cannot
+          #      independently grade the detection — it ALWAYS waits for a human, even
+          #      at fully (mallcoppro-f95 BOTH ruling, part B). We parse the JSON
+          #      FIELD from gate.json, never the free-text evidence string.
+          #   2. The repo's REQUIRED check + branch protection: `gh pr merge --auto`
+          #      does NOT merge now — it QUEUES the merge to happen iff the required
+          #      exam check passes. A compromised runner cannot satisfy that trusted,
+          #      agent-unreachable check, so auto-merge never bypasses the gate.
+          gate="${ARTIFACT_PATH}/gate.json"
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "selfext: opener returned no PR number — withholding auto-merge (fail-safe)."; exit 0
+          fi
+          if [ ! -f "${gate}" ] || ! command -v jq >/dev/null 2>&1; then
+            echo "selfext: cannot read the structured gate result — withholding auto-merge (fail-safe)."; exit 0
+          fi
+          novel=$(jq -r '.novel_gap // false' "${gate}")
+          families=$(jq -r '(.novel_gap_families // []) | length' "${gate}")
+          if [ "${novel}" = "true" ] || [ "${families:-0}" != "0" ]; then
+            echo "selfext: novel-gap family present — leaving PR #${PR_NUMBER} for human review regardless of dial."
+            gh pr comment "${PR_NUMBER}" --body \
+              "Auto-merge withheld despite \`learning.autonomy: fully\`: this GREEN proposal declares a **novel-gap** finding family with no labeled coverage in the reference corpus, so the gate cannot independently grade its detection. A human must review and merge it. (mallcoppro-f95 BOTH ruling / design R3.)" || true
+            exit 0
+          fi
+          # Clean widen at fully with no novel gap → queue auto-merge under the
+          # operator's OWN github.token (the same identity that opened the PR).
+          gh pr merge "${PR_NUMBER}" --auto --squash
+          echo "selfext: dial=fully, no novel gap → auto-merge queued (still gated on the required exam check)."
+
+  contribute_back:
+    # CODE-lane contribute-back (rd mallcoppro-59e). Runs ONLY on a follow-up
+    # dispatch that names an already-merged authored detector to promote upstream
+    # (inputs.promote_detector != ''). Proposes a merged customer detectors/<name>/
+    # for promotion into the shared OSS core/detect/authored/<name>/.
+    #
+    # THREE hard lines, none dial-overridable:
+    #   1. CONSENT is the operator's OWN mallcop.yaml learning.contribute_back == true,
+    #      read from the checkout with the SAME fail-safe grep-strict parse as the
+    #      autonomy dial (absent file / absent key / any non-"true" value => off). It
+    #      is DELIBERATELY not a workflow input, so a web-lane dispatch can never turn
+    #      it on (R3 + R5). promote_detector selects WHICH detector, never consent.
+    #   2. OPERATOR CREDENTIAL, NOT MALLCOP-PRO'S: the upstream PR is opened under the
+    #      operator's OWN token (secrets.oss_contrib_token, a secret THEY set in THEIR
+    #      repo). mallcop-pro's server holds NO OSS write credential, ever (R8). Absent
+    #      token => fail-safe skip.
+    #   3. NEVER MERGES: this job calls NO `gh pr merge` of any kind — the shared OSS
+    #      repo's OWN exam.yml + CODEOWNERS review gate the merge, categorically outside
+    #      this job's hands at every autonomy dial (R3). A template lint (gharuntime's
+    #      TestContributeBackJobNeverMerges) asserts this by construction.
+    if: inputs.promote_detector != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash               # the runner container's default sh (dash) chokes on `set -o pipefail`
+    container:
+      # Same pinned runner image as the author job — it bakes mallcop-ops + the
+      # open-contribback-code-pr.sh helper alongside open-proposal-pr.sh.
+      image: ghcr.io/mallcop-app/selfext-runner@sha256:58e679b83e52c958e730b08a04bfee279c6bd05892fd9a6e53019e85011c9a73
+    permissions:
+      contents: read     # read-only in THIS repo; the upstream PR uses the operator's own token
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4 — pinned by SHA (mallcoppro-7ee7)
+        with:
+          egress-policy: block
+          disable-sudo: true
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
+        with:
+          fetch-depth: 0    # default branch — where a MERGED authored detector lives
+      - name: gate on contribute_back consent (operator config file, never a workflow input)   # mallcoppro-59e (R3 + R5)
+        id: consent
+        run: |
+          set -euo pipefail
+          # Fail-safe grep-strict, MIRRORING the autonomy dial step: an absent file,
+          # an absent learning.contribute_back key, or ANY value other than a literal
+          # true => off. Consent is OPERATOR-OWNED (mallcop.yaml, guard/CODEOWNERS-
+          # protected, R5); it is NEVER a workflow input, so a web-lane dispatch can
+          # never turn it on (R3 — the operator owns their own blast radius).
+          cb=off
+          if [ -f mallcop.yaml ]; then
+            raw=$(grep -E '^[[:space:]]+contribute_back:[[:space:]]*"?(true|false)"?[[:space:]]*(#.*)?$' mallcop.yaml \
+                    | head -n1 | sed -E 's/^[[:space:]]+contribute_back:[[:space:]]*"?([a-z]+)"?.*$/\1/' || true)
+            case "$raw" in
+              true) cb=on  ;;
+              *)    cb=off ;;   # false / unknown / absent => fail-safe off
+            esac
+          fi
+          echo "selfext: contribute_back = ${cb} (from mallcop.yaml learning.contribute_back, fail-safe to off)"
+          echo "cb=${cb}" >> "$GITHUB_OUTPUT"
+      - name: verify the authored detector actually merged
+        id: merged
+        if: steps.consent.outputs.cb == 'on'
+        run: |
+          set -euo pipefail
+          # "The improvement PR actually merged" is proven STRUCTURALLY: the promoted
+          # detector's source must be present on the DEFAULT-branch checkout. If it is
+          # absent, the authoring PR has not merged yet (or the name is wrong) =>
+          # contribute nothing (fail-safe).
+          det="detectors/${{ inputs.promote_detector }}"
+          if [ ! -d "$det" ]; then
+            echo "selfext: ${det} is not on the default branch — the authoring PR has not merged; contributing nothing."
+            echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "selfext: ${det} present — the authoring PR merged; eligible to contribute back."
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+      - name: open upstream OSS review PR (operator token — NEVER merges)   # mallcoppro-59e (R3 + R8)
+        if: steps.consent.outputs.cb == 'on' && steps.merged.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.oss_contrib_token }}
+          OSS_REPO: ${{ inputs.oss_repo }}
+          DETECTOR: ${{ inputs.promote_detector }}
+        run: |
+          set -euo pipefail
+          # mallcop-pro's SERVER holds no OSS write credential (R8). This PR is opened
+          # under the OPERATOR's OWN token — a secret THEY set in THEIR repo. Absent
+          # token => fail-safe skip (mallcop-pro never supplies one).
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "selfext: no operator OSS contribute-back token (secrets.oss_contrib_token) — skipping (fail-safe)."
+            exit 0
+          fi
+          # open-contribback-code-pr.sh ships in the pinned runner image (a sibling of
+          # open-proposal-pr.sh). It mirrors detectors/<name>/ into
+          # core/detect/authored/<name>/ on a DETERMINISTIC fork branch
+          # (contribback/authored-<name> => idempotent: one open PR per detector) and
+          # opens a REVIEW PR to the shared OSS repo under the operator's OWN token. It
+          # calls NO `gh pr merge` — the OSS repo's own exam.yml + CODEOWNERS review
+          # gate the merge, at every dial (R3/R8).
+          bash /opt/mallcop/open-contribback-code-pr.sh "${DETECTOR}" "${OSS_REPO}"
