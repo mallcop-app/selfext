@@ -367,10 +367,11 @@ jobs:
           else
             # donut-byoi: base_url is mallcop.app — the mallcop inference endpoint is
             # non-streaming, so --stream-shim bridges opencode's unconditional
-            # streaming; and it recognizes catalog ids, so pin the STRONG Go-capable
-            # coder explicitly (the bare heal lane resolves to a flash model that plans
-            # but never writes).
-            RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim --code-model glm-5.2@deepinfra)
+            # streaming; and it forwards to the server, which resolves the OPAQUE
+            # "coding" lane alias server-side to the strong Go-capable coder. Pin the
+            # alias, never a raw model id (the bare heal lane resolves to a flash model
+            # that plans but never writes). The real model never leaves the server.
+            RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim --code-model coding)
           fi
           # --exam-repo grades a customer-shaped target (no in-tree cmd/mallcop)
           # against the reference tree checked out at _exam. It is
