@@ -14,28 +14,49 @@
 # autonomy dial is read from the repo's config file, NEVER a workflow input
 # (R3 + R5): a web-lane dispatch cannot escalate it.
 #
-# EGRESS RULING B (rd mallcoppro-10e; ruling mallcoppro-1a1, Baron 2026-07-15):
-# The author job NO LONGER runs inside the pinned `container:` runner image.
-# step-security/harden-runner's egress jail (egress-policy: block) CANNOT enforce
-# egress inside a container job — so the fail-closed egress-proof step could never
-# pass under a container, and the CODE lane could never author on a GitHub-hosted
-# runner (evidence: mallcop-e2e run 29314104398). We therefore reproduce the
-# runner image's toolchain PRE-JAIL, on the bare host runner, from the SAME
-# PUBLIC, PINNED, checksum-verified downloads the image bakes (infra/Dockerfile) —
-# opencode (pinned, --ignore-scripts, autoupdate/telemetry off), mallcop +
-# mallcop-ops from their SHA-256-verified public release tarballs, the bundled
-# config, and a SHA-pinned Go toolchain. Integrity now comes from the pinned
-# versions + checksums (fail-closed on mismatch) instead of the image digest.
-# harden-runner then jails egress on the host — where it actually works.
+# EGRESS RULING B → d9d (rd mallcoppro-10e; ruling mallcoppro-1a1 then mallcoppro-d9d,
+# Baron 2026-07-15): The author job NO LONGER runs inside the pinned `container:` runner
+# image (harden-runner cannot enforce egress inside a container — evidence: mallcop-e2e
+# run 29314104398). The FIRST fix used step-security/harden-runner on the bare host, but
+# a live proof (run 29421569762) exposed a second wall: harden-runner's block mode is a
+# StepSecurity PAID feature on PRIVATE repos, so a free-tier private repo silently
+# downgrades to audit and cannot block. RULING d9d, option (iii): drop the harden-runner
+# / StepSecurity dependency entirely and SELF-ENFORCE the egress jail with a hand-rolled
+# iptables default-DENY ruleset — which works on the free tier, private repos included.
 #
-# HARD INVARIANT (the whole point of the jail): the egress jail must be PROVABLY
-# CLOSED before any model-driven or otherwise-untrusted execution. The pre-jail
-# steps ONLY download+verify pinned artifacts and install the trusted toolchain;
-# they run NO model-authored code. harden-runner normally wants to be the very
-# first step; the deliberate deviation here is that enforcement STARTS at its
-# step — everything before it is pinned, checksum-verified setup, and EVERYTHING
-# model-driven (opencode authoring + the authored-code gate subprocess) runs
-# strictly AFTER the jail is planted and proven.
+# We still reproduce the runner image's toolchain PRE-JAIL, on the bare host, from the
+# SAME PUBLIC, PINNED, checksum-verified downloads the image bakes (infra/Dockerfile) —
+# opencode (pinned, --ignore-scripts, autoupdate/telemetry off), mallcop + mallcop-ops
+# from their SHA-256-verified public release tarballs, the bundled config, and a
+# SHA-pinned Go toolchain. Integrity comes from the pinned versions + checksums
+# (fail-closed on mismatch), not an image digest.
+#
+# THE JAIL (self-enforced, applied as one boundary step after all pinned setup + go mod
+# download, before anything model-driven): resolve the allowlist to IPs while DNS is
+# open, then load an iptables ruleset that sets `OUTPUT` policy DROP and permits only
+# (a) loopback, (b) ESTABLISHED/RELATED return traffic, (c) the DNS resolver on :53,
+# (d) the pinned app/github/go-proxy IPs on :443, and (e) the GitHub Actions runner
+# control-plane ranges on :443 (on a HOST runner the jail governs the runner AGENT too —
+# unlike the container era — so it must keep reaching the Actions service or the job is
+# marked lost; these are GitHub-owned Azure ranges). IPv6 new-egress is dropped. Then
+# SUDO IS DESTROYED (`chmod 0000` the setuid binary) so the authored/model-driven code —
+# the threat model, which on a GH-hosted runner has passwordless sudo — cannot flush the
+# rules and lift its own jail.
+#
+# DEFENSE IN DEPTH / residual: this coarse IP jail cannot distinguish processes, so the
+# runner-control-plane allowance (e) is broad (GitHub-owned Azure ranges). The genuinely
+# UNTRUSTED process — the opencode child — is separately confined by the FINE per-process
+# Landlock network jail mallcop-ops applies to it (mallcoppro-6c4), which restricts it to
+# the inference endpoint. So model-driven code cannot use (e); the coarse layer only has
+# to default-deny + keep the trusted toolchain/git and the runner agent working.
+#
+# HARD INVARIANT (the whole point of the jail): the egress jail must be PROVABLY CLOSED
+# before any model-driven or otherwise-untrusted execution. The pre-jail steps ONLY
+# download+verify pinned artifacts and install the trusted toolchain; they run NO
+# model-authored code. The jail-apply step is the explicit boundary — everything before
+# it is pinned, checksum-verified setup; EVERYTHING model-driven (opencode authoring +
+# the authored-code gate subprocess) runs strictly AFTER the jail is applied AND proven
+# (planted curl blocked + inference reachable + sudo dead).
 #
 # EXAM-REPO (rd mallcoppro-364): `mallcop-ops selfext --run` grades the authored
 # detector against a REFERENCE mallcop tree when --target-repo is customer-shaped
@@ -133,10 +154,10 @@ jobs:
       DO_NOT_TRACK: "1"
     steps:
       # ---- PRE-JAIL: pinned, checksum-verified toolchain setup (NO model-driven code) ----
-      # These steps run BEFORE harden-runner deliberately (see the HARD INVARIANT in
-      # the header). They only DOWNLOAD+VERIFY pinned artifacts and check out repos;
-      # they execute no untrusted/authored code. Egress is open here on purpose so all
-      # downloads happen now — the jail below then needs NO download hosts.
+      # These steps run BEFORE the jail-apply boundary deliberately (see the HARD
+      # INVARIANT in the header). They only DOWNLOAD+VERIFY pinned artifacts and check
+      # out repos; they execute no untrusted/authored code. Egress is open here on
+      # purpose so all downloads happen now — the jail below then needs NO download hosts.
       - name: checkout target repo (the repo we author into)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
         with:
@@ -223,42 +244,87 @@ jobs:
             fi
           done
 
-      # ---- JAIL: enforcement starts HERE. Everything below runs under egress:block. ----
-      - name: plant the host egress jail (harden-runner)   # mallcoppro-7ee7 / mallcoppro-10e
-        # Deliberate deviation from harden-runner's "first step" guidance: enforcement
-        # begins at THIS step. Everything above is pinned, checksum-verified toolchain
-        # setup that runs NO model-driven code; everything below (opencode authoring +
-        # the authored-code gate) runs only AFTER the jail is planted and proven. On a
-        # bare host runner harden-runner CAN enforce egress (it cannot inside a
-        # container — the reason the container was removed, EGRESS RULING B).
-        # allowed-endpoints is UNCHANGED from the pre-B list and stays minimal: NO
-        # download hosts are added (all downloads happened pre-jail). proxy.golang.org
-        # / sum.golang.org stay ONLY as the warm-cache fallback for the gate's build.
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4 — pinned by SHA (mallcoppro-7ee7)
-        with:
-          egress-policy: block
-          disable-sudo: true
-          allowed-endpoints: >
-            mallcop.app:443
-            api.mallcop.app:443
-            github.com:443
-            api.github.com:443
-            objects.githubusercontent.com:443
-            proxy.golang.org:443
-            sum.golang.org:443
-      - name: verify egress jail (fail-closed live proof)   # mallcoppro-6c4
+      # ==== JAIL BOUNDARY: self-enforced egress default-deny + sudo lockdown ====
+      # Everything ABOVE is pinned, checksum-verified setup (no model code). Everything
+      # BELOW runs under a default-DENY egress jail that authored/model code cannot lift.
+      - name: apply self-enforced egress jail + destroy sudo (THE boundary)   # mallcoppro-d9d (option iii)
+        run: |
+          set -euo pipefail
+          # Hand-rolled iptables default-DENY egress — no harden-runner / StepSecurity
+          # dependency, so it enforces on the FREE tier incl. private repos (the reason
+          # RULING d9d replaced harden-runner: its block mode is a paid feature on
+          # private repos and silently downgrades to audit — proven in run 29421569762).
+          #
+          # 1) Resolve the allowlist to IPs while DNS is still open (pin, don't trust
+          #    later re-resolution). Author-job allowlist: the inference endpoint +
+          #    GitHub (proposal push/PR open) + the Go module proxy (gate build fallback).
+          ALLOW_DOMAINS="mallcop.app api.mallcop.app github.com api.github.com objects.githubusercontent.com proxy.golang.org sum.golang.org"
+          APP_IPS=""
+          for d in $ALLOW_DOMAINS; do
+            for _ in 1 2 3; do APP_IPS="$APP_IPS $(getent ahostsv4 "$d" | awk '{print $1}')"; done
+          done
+          APP_IPS=$(printf '%s\n' $APP_IPS | grep -E '^[0-9]+\.' | sort -u)
+          echo "jail: pinned app/github/go-proxy IPs:"; printf '  %s\n' $APP_IPS
+          # 2) DNS resolver(s) — keep name resolution working under the jail (the runner
+          #    must resolve its own dynamic Actions hostnames; git/gh/opencode re-resolve).
+          # Capture BOTH the resolv.conf nameservers AND the real upstream from
+          # resolvectl — on ubuntu the stub is 127.0.0.53 (loopback, already allowed) and
+          # its upstream (e.g. Azure 168.63.129.16) must be permitted on :53 or resolution
+          # breaks under the jail (the runner could not resolve its own Actions hostnames).
+          NS=$( { grep -h '^nameserver' /etc/resolv.conf /run/systemd/resolve/resolv.conf 2>/dev/null | awk '{print $2}'; resolvectl status 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' || true; } | grep -E '^[0-9]+\.' | sort -u )
+          echo "jail: DNS resolvers:"; printf '  %s\n' $NS
+          # 3) GitHub Actions runner control-plane ranges — on a HOST runner the jail
+          #    governs the runner AGENT itself (it did NOT in the container era), so the
+          #    agent must keep reaching the Actions service to stream logs / report step
+          #    results, or the job is marked lost. GitHub-owned (Azure) ranges. The
+          #    genuinely-untrusted process (opencode) is separately Landlock-confined to
+          #    the inference endpoint (mallcoppro-6c4), so it cannot use this surface —
+          #    documented residual of a coarse IP jail that cannot distinguish processes.
+          ACTIONS=$(curl -sS --max-time 15 https://api.github.com/meta \
+            | python3 -c 'import sys,json;print("\n".join(c for c in json.load(sys.stdin).get("actions",[]) if ":" not in c))')
+          # 4) Load the ruleset ATOMICALLY (iptables-restore): ACCEPTs + default-DROP in
+          #    one shot so the live runner connection is never cut mid-config.
+          RULES="$(mktemp)"
+          {
+            echo "*filter"
+            echo ":INPUT ACCEPT [0:0]"
+            echo ":FORWARD DROP [0:0]"
+            echo ":OUTPUT DROP [0:0]"
+            echo "-A OUTPUT -o lo -j ACCEPT"
+            echo "-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+            for ip in $NS;      do echo "-A OUTPUT -d ${ip}/32 -p udp --dport 53 -j ACCEPT"; echo "-A OUTPUT -d ${ip}/32 -p tcp --dport 53 -j ACCEPT"; done
+            for ip in $APP_IPS; do echo "-A OUTPUT -d ${ip}/32 -p tcp --dport 443 -j ACCEPT"; done
+            for c  in $ACTIONS; do echo "-A OUTPUT -d ${c} -p tcp --dport 443 -j ACCEPT"; done
+            echo "COMMIT"
+          } > "$RULES"
+          sudo iptables-restore < "$RULES"
+          rm -f "$RULES"
+          # 5) IPv6: no allowlisted v6 destinations — loopback + established only, drop all
+          #    new v6 egress so nothing bypasses the v4 jail over IPv6.
+          if command -v ip6tables >/dev/null 2>&1; then
+            sudo ip6tables -F OUTPUT
+            sudo ip6tables -A OUTPUT -o lo -j ACCEPT
+            sudo ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+            sudo ip6tables -P OUTPUT DROP
+          fi
+          # 6) THE lock — destroy sudo so authored/model-driven code (the threat model,
+          #    which has passwordless sudo on GH-hosted runners) cannot flush the rules
+          #    and lift its own jail. chmod 0000 removes the setuid entrypoint entirely
+          #    (most robust); nothing in the job can regain root after this line.
+          sudo chmod 0000 "$(command -v sudo)"
+          echo "jail: applied (default-deny egress) + sudo destroyed."
+      - name: verify egress jail (fail-closed live proof — blocked + reachable + sudo dead)   # mallcoppro-6c4 / mallcoppro-d9d
         env:
           BASE_URL: ${{ inputs.base_url }}
         run: |
           set -euo pipefail
-          # LIVE proof that the runner-level egress jail (harden-runner egress-policy:
-          # block) actually DROPS a planted call to a host outside the allowlist, and
-          # that the configured inference endpoint is still reachable. This is the
-          # coarse HOST-level layer; the fine, OS-enforced per-process layer is the
-          # Landlock jail mallcop-ops applies to the opencode child (mallcoppro-6c4).
-          # FAIL-CLOSED: if the planted call is NOT blocked (egress not enforced) or
-          # the inference endpoint cannot be reached, we exit non-zero and author
-          # NOTHING rather than run under a jail we could not prove.
+          # LIVE proof that the self-enforced jail (1) DROPS a planted call to a host
+          # outside the allowlist, (2) still reaches the inference endpoint, and (3) has
+          # DESTROYED sudo so the jail cannot be lifted from within. This is the coarse
+          # HOST layer; the fine, OS-enforced per-process layer is the Landlock jail
+          # mallcop-ops applies to the opencode child (mallcoppro-6c4). FAIL-CLOSED: if
+          # ANY of the three assertions fails we exit non-zero and author NOTHING rather
+          # than run under a jail we could not prove.
           echo "egress-jail: planting a disallowed call to https://example.com ..."
           if curl -sS --max-time 8 -o /dev/null https://example.com; then
             echo "FATAL: egress to a non-allowlisted host SUCCEEDED — egress jail not enforced" >&2
@@ -270,7 +336,13 @@ jobs:
             echo "FATAL: inference endpoint $BASE_URL is unreachable through the egress jail" >&2
             exit 1
           fi
-          echo "egress-jail: OK — inference endpoint reachable; jail proven"
+          echo "egress-jail: OK — inference endpoint reachable"
+          echo "egress-jail: confirming sudo is destroyed (jail cannot be lifted) ..."
+          if sudo -n true 2>/dev/null; then
+            echo "FATAL: sudo still works — authored code could flush the egress rules" >&2
+            exit 1
+          fi
+          echo "egress-jail: OK — sudo is dead; jail cannot be lifted. Jail proven."
       - name: author + in-runner gate (never merges)
         id: drive
         env:
@@ -306,6 +378,9 @@ jobs:
           # --exam-repo grades a customer-shaped target (no in-tree cmd/mallcop)
           # against the reference tree checked out at _exam (mallcoppro-364). It is
           # ignored when the target ships its own cmd/mallcop, so it is always safe.
+          # Capture stdout+stderr so the exam-repo/gate outcome is recoverable even if
+          # the runner's blob log upload is throttled by the jail (the evidence step
+          # below surfaces it to the job summary); pipefail preserves the real exit code.
           mallcop-ops selfext --run \
             --target-repo "$GITHUB_WORKSPACE" --base-ref HEAD \
             --exam-repo "$GITHUB_WORKSPACE/_exam" \
@@ -316,7 +391,23 @@ jobs:
             "${RAIL_ARGS[@]}" \
             --artifact-dir "$RUNNER_TEMP/proposals" \
             --budget-usd "${{ inputs.budget_usd }}" \
-            --validate-bin mallcop
+            --validate-bin mallcop 2>&1 | tee "$RUNNER_TEMP/selfext-drive.log"
+      - name: surface gate/exam outcome (mallcoppro-364 evidence; robust to blob-log loss)   # mallcoppro-d9d
+        if: always()
+        run: |
+          log="$RUNNER_TEMP/selfext-drive.log"
+          [ -f "$log" ] || { echo "no authoring log captured (driver did not run)"; exit 0; }
+          {
+            echo "### selfext CODE-lane authoring / gate outcome"
+            echo ""
+            echo "Terminal outcome + gate-stage lines below. A guard-stage rejection for want of a"
+            echo "reference tree (the mallcoppro-364 bug) would appear here; with --exam-repo supplied"
+            echo "it must be ABSENT. (Redacted transcript/secrets are NOT on stdout — they live in the"
+            echo "run artifact.)"
+            echo '```'
+            grep -iE 'PROPOSED|REJECTED|REFUSED|SKIPPED|FAILED|gate|stage|guard|four-layer|exam|reference|frozen|novel|corpus|customer-shaped' "$log" | tail -n 60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: read autonomy dial (operator config file, never a workflow input)   # mallcoppro-101 (R3 + R5)
         id: autonomy
         if: steps.drive.outputs.proposed == 'true'
@@ -421,12 +512,13 @@ jobs:
     #      this job's hands at every autonomy dial (R3). A template lint (gharuntime's
     #      TestContributeBackJobNeverMerges) asserts this by construction.
     #
-    # EGRESS RULING B (mallcoppro-10e): like the author job, this job no longer runs
-    # in the pinned container (harden-runner cannot enforce egress inside one). It
-    # runs NO model-driven code — only trusted git/gh + the operator-identity opener
-    # script — so it needs no toolchain reproduction: it checks out the caller repo
-    # and this workflow's own repo (for the opener) pre-jail, then plants the SAME
-    # host egress jail (github-only allowlist, unchanged).
+    # EGRESS RULING d9d (mallcoppro-10e → mallcoppro-d9d): like the author job, this job
+    # no longer runs in the pinned container, and no longer uses harden-runner (its block
+    # mode is a paid feature on private repos). It runs NO model-driven code — only
+    # trusted git/gh + the operator-identity opener script — so it needs no toolchain
+    # reproduction: it checks out the caller repo and this workflow's own repo (for the
+    # opener) pre-jail, then applies the SAME self-enforced iptables default-DENY egress
+    # jail (github-only allowlist) + destroys sudo.
     if: inputs.promote_detector != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -448,15 +540,57 @@ jobs:
           ref: ${{ github.job_workflow_sha }}   # SHA-locked to this reusable workflow's own commit
           path: _selfext
           fetch-depth: 1
-      # ---- JAIL: host egress enforcement (github-only). No model-driven execution follows. ----
-      - name: plant the host egress jail (harden-runner)   # mallcoppro-7ee7 / mallcoppro-10e
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4 — pinned by SHA (mallcoppro-7ee7)
-        with:
-          egress-policy: block
-          disable-sudo: true
-          allowed-endpoints: >
-            github.com:443
-            api.github.com:443
+      # ==== JAIL BOUNDARY: self-enforced egress default-deny + sudo lockdown (github-only) ====
+      - name: apply self-enforced egress jail + destroy sudo (github-only)   # mallcoppro-d9d (option iii)
+        run: |
+          set -euo pipefail
+          # Hand-rolled iptables default-DENY egress (no harden-runner / StepSecurity —
+          # its block mode is a paid feature on private repos). This job talks ONLY to
+          # github.com / api.github.com (fork, fetch upstream, push, PR open). Same
+          # mechanism as the author job; see that job for the full rationale.
+          ALLOW_DOMAINS="github.com api.github.com"
+          APP_IPS=""
+          for d in $ALLOW_DOMAINS; do
+            for _ in 1 2 3; do APP_IPS="$APP_IPS $(getent ahostsv4 "$d" | awk '{print $1}')"; done
+          done
+          APP_IPS=$(printf '%s\n' $APP_IPS | grep -E '^[0-9]+\.' | sort -u)
+          echo "jail: pinned github IPs:"; printf '  %s\n' $APP_IPS
+          # Capture BOTH the resolv.conf nameservers AND the real upstream from
+          # resolvectl — on ubuntu the stub is 127.0.0.53 (loopback, already allowed) and
+          # its upstream (e.g. Azure 168.63.129.16) must be permitted on :53 or resolution
+          # breaks under the jail (the runner could not resolve its own Actions hostnames).
+          NS=$( { grep -h '^nameserver' /etc/resolv.conf /run/systemd/resolve/resolv.conf 2>/dev/null | awk '{print $2}'; resolvectl status 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' || true; } | grep -E '^[0-9]+\.' | sort -u )
+          # GitHub Actions runner control-plane ranges (keeps the runner agent reporting
+          # results; see the author job's note — this job runs no model code, so there is
+          # no untrusted process to confine here).
+          ACTIONS=$(curl -sS --max-time 15 https://api.github.com/meta \
+            | python3 -c 'import sys,json;print("\n".join(c for c in json.load(sys.stdin).get("actions",[]) if ":" not in c))')
+          RULES="$(mktemp)"
+          {
+            echo "*filter"
+            echo ":INPUT ACCEPT [0:0]"
+            echo ":FORWARD DROP [0:0]"
+            echo ":OUTPUT DROP [0:0]"
+            echo "-A OUTPUT -o lo -j ACCEPT"
+            echo "-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+            for ip in $NS;      do echo "-A OUTPUT -d ${ip}/32 -p udp --dport 53 -j ACCEPT"; echo "-A OUTPUT -d ${ip}/32 -p tcp --dport 53 -j ACCEPT"; done
+            for ip in $APP_IPS; do echo "-A OUTPUT -d ${ip}/32 -p tcp --dport 443 -j ACCEPT"; done
+            for c  in $ACTIONS; do echo "-A OUTPUT -d ${c} -p tcp --dport 443 -j ACCEPT"; done
+            echo "COMMIT"
+          } > "$RULES"
+          sudo iptables-restore < "$RULES"
+          rm -f "$RULES"
+          if command -v ip6tables >/dev/null 2>&1; then
+            sudo ip6tables -F OUTPUT
+            sudo ip6tables -A OUTPUT -o lo -j ACCEPT
+            sudo ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+            sudo ip6tables -P OUTPUT DROP
+          fi
+          sudo chmod 0000 "$(command -v sudo)"
+          # Fail-closed proof: sudo dead + a planted disallowed call blocked.
+          if sudo -n true 2>/dev/null; then echo "FATAL: sudo still works — jail can be lifted" >&2; exit 1; fi
+          if curl -sS --max-time 8 -o /dev/null https://example.com; then echo "FATAL: egress not enforced" >&2; exit 1; fi
+          echo "jail: applied + proven (sudo dead, disallowed egress blocked)."
       - name: gate on contribute_back consent (operator config file, never a workflow input)   # mallcoppro-59e (R3 + R5)
         id: consent
         run: |
