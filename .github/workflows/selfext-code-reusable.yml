@@ -12,17 +12,16 @@
 # gate reported no novel-gap family — which still requires the repo's required
 # exam check + branch protection to pass, so the gate is never bypassed. The
 # autonomy dial is read from the repo's config file, NEVER a workflow input
-# (R3 + R5): a web-lane dispatch cannot escalate it.
+# — a web-lane dispatch cannot escalate it.
 #
-# EGRESS RULING B → d9d (rd mallcoppro-10e; ruling mallcoppro-1a1 then mallcoppro-d9d,
-# Baron 2026-07-15): The author job NO LONGER runs inside the pinned `container:` runner
-# image (harden-runner cannot enforce egress inside a container — evidence: mallcop-e2e
-# run 29314104398). The FIRST fix used step-security/harden-runner on the bare host, but
-# a live proof (run 29421569762) exposed a second wall: harden-runner's block mode is a
-# StepSecurity PAID feature on PRIVATE repos, so a free-tier private repo silently
-# downgrades to audit and cannot block. RULING d9d, option (iii): drop the harden-runner
-# / StepSecurity dependency entirely and SELF-ENFORCE the egress jail with a hand-rolled
-# iptables default-DENY ruleset — which works on the free tier, private repos included.
+# EGRESS HARDENING: The author job NO LONGER runs inside the pinned `container:` runner
+# image (harden-runner cannot enforce egress inside a container). The FIRST fix used
+# step-security/harden-runner on the bare host, but a live proof exposed a second wall:
+# harden-runner's block mode is a StepSecurity PAID feature on PRIVATE repos, so a
+# free-tier private repo silently downgrades to audit and cannot block. The fix: drop the
+# harden-runner / StepSecurity dependency entirely and SELF-ENFORCE the egress jail with a
+# hand-rolled iptables default-DENY ruleset — which works on the free tier, private repos
+# included.
 #
 # We still reproduce the runner image's toolchain PRE-JAIL, on the bare host, from the
 # SAME PUBLIC, PINNED, checksum-verified downloads the image bakes (infra/Dockerfile) —
@@ -46,7 +45,7 @@
 # DEFENSE IN DEPTH / residual: this coarse IP jail cannot distinguish processes, so the
 # runner-control-plane allowance (e) is broad (GitHub-owned Azure ranges). The genuinely
 # UNTRUSTED process — the opencode child — is separately confined by the FINE per-process
-# Landlock network jail mallcop-ops applies to it (mallcoppro-6c4), which restricts it to
+# Landlock network jail mallcop-ops applies to it, which restricts it to
 # the inference endpoint. So model-driven code cannot use (e); the coarse layer only has
 # to default-deny + keep the trusted toolchain/git and the runner agent working.
 #
@@ -58,28 +57,28 @@
 # the authored-code gate subprocess) runs strictly AFTER the jail is applied AND proven
 # (planted curl blocked + inference reachable + sudo dead).
 #
-# EXAM-REPO (rd mallcoppro-364): `mallcop-ops selfext --run` grades the authored
+# EXAM-REPO: `mallcop-ops selfext --run` grades the authored
 # detector against a REFERENCE mallcop tree when --target-repo is customer-shaped
 # (no cmd/mallcop of its own — the common case: an operator's thin-embed repo or
-# the mallcop-e2e dogfood repo). Without it the guard stage rejects every authored
+# a dogfood repo). Without it the guard stage rejects every authored
 # detectors/<name>/ sidecar (code-frozen rule). We check out mallcop-app/mallcop
 # at the SAME tag as the pinned `mallcop` gate binary (v0.9.3 → cmd/mallcop +
 # exams/scenarios/corpus.pin) and pass it via --exam-repo. When the caller repo
 # DOES ship cmd/mallcop, mallcop-ops ignores --exam-repo, so passing it is always
 # safe.
 #
-# CODE-lane contribute-back (rd mallcoppro-59e): a SEPARATE, follow-up dispatch
+# CODE-lane contribute-back: a SEPARATE, follow-up dispatch
 # (promote_detector != '') proposes an ALREADY-MERGED customer authored detector
 # (detectors/<name>/) for promotion into the shared OSS corpus
 # (core/detect/authored/<name>/). It is the code-lane analogue of the DATA lane's
-# oss-pr artifact — the gap rd mallcoppro-e7f flagged (the code lane had no
+# oss-pr artifact — the gap that existed before (the code lane had no
 # artifact at all). It is triple-gated and NEVER merges: (1) the operator's OWN
 # mallcop.yaml learning.contribute_back must be true (read from the checkout, never
 # a workflow input — same fail-safe parse as the autonomy dial); (2) the detector
 # must actually be present on the default branch (proof its PR merged); (3) the
 # upstream PR is opened under the OPERATOR's OWN token (secrets.oss_contrib_token) —
-# mallcop-pro holds no OSS write credential (R8) — and the job calls NO `gh pr merge`
-# at any dial: the OSS repo's own exam.yml + CODEOWNERS review gate the merge (R3).
+# mallcop-pro holds no OSS write credential — and the job calls NO `gh pr merge`
+# at any dial: the OSS repo's own exam.yml + CODEOWNERS review gate the merge.
 #
 # The operator-identity PR opener scripts (infra/open-proposal-pr.sh,
 # infra/open-contribback-code-pr.sh) used to be baked into the runner image at
@@ -92,9 +91,9 @@
 # .github/workflows/publish-runner.yml) is now UNUSED by this workflow. It is
 # INTENTIONALLY left in place (not deleted) — it still documents the exact
 # toolchain versions/checksums the pre-jail steps mirror, and other tooling may
-# depend on it. Retiring it is a separate decision (rd mallcoppro-10e).
+# depend on it. Retiring it is a separate decision.
 #
-# mallcop-selfext-template: v1   (rd mallcoppro-98e)
+# mallcop-selfext-template: v1
 name: mallcop self-extension code lane (reusable)
 
 on:
@@ -116,7 +115,7 @@ on:
     secrets:
       inference_key: { required: true }
       byoi_url: { required: false }
-      # The OPERATOR's OWN token for the upstream OSS PR (R8: mallcop-pro holds no
+      # The OPERATOR's OWN token for the upstream OSS PR (mallcop-pro holds no
       # OSS write credential). Absent => contribute-back cannot open a PR (fail-safe
       # skip). NEVER a merge credential — the job calls no `gh pr merge`.
       oss_contrib_token: { required: false }
@@ -159,17 +158,17 @@ jobs:
       # out repos; they execute no untrusted/authored code. Egress is open here on
       # purpose so all downloads happen now — the jail below then needs NO download hosts.
       - name: checkout target repo (the repo we author into)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           fetch-depth: 0          # the gate needs base..HEAD
-      - name: checkout this reusable workflow's own repo (operator-identity PR openers)   # mallcoppro-10e
+      - name: checkout this reusable workflow's own repo (operator-identity PR openers)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           repository: mallcop-app/selfext
           ref: ${{ github.job_workflow_sha }}   # the EXACT commit this reusable workflow runs at — SHA-locked to `uses:`
           path: _selfext
           fetch-depth: 1
-      - name: checkout the reference mallcop tree (exam-repo — same tag as the gate binary)   # mallcoppro-364
+      - name: checkout the reference mallcop tree (exam-repo — same tag as the gate binary)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           repository: mallcop-app/mallcop
@@ -228,7 +227,7 @@ jobs:
           "$BIN/mallcop-ops" selfext -h >/dev/null 2>&1 || true
           "$BIN/mallcop" --version 2>/dev/null || true
           command -v jq >/dev/null || { echo "FATAL: jq missing from the runner" >&2; exit 1; }
-      - name: pre-fetch Go modules so the jailed gate needs no module egress   # mallcoppro-10e
+      - name: pre-fetch Go modules so the jailed gate needs no module egress
         run: |
           set -euo pipefail
           # The trusted gate (`mallcop validate-proposal`) uses the Go toolchain to
@@ -247,13 +246,13 @@ jobs:
       # ==== JAIL BOUNDARY: self-enforced egress default-deny + sudo lockdown ====
       # Everything ABOVE is pinned, checksum-verified setup (no model code). Everything
       # BELOW runs under a default-DENY egress jail that authored/model code cannot lift.
-      - name: apply self-enforced egress jail + destroy sudo (THE boundary)   # mallcoppro-d9d (option iii)
+      - name: apply self-enforced egress jail + destroy sudo (THE boundary)
         run: |
           set -euo pipefail
           # Hand-rolled iptables default-DENY egress — no harden-runner / StepSecurity
           # dependency, so it enforces on the FREE tier incl. private repos (the reason
-          # RULING d9d replaced harden-runner: its block mode is a paid feature on
-          # private repos and silently downgrades to audit — proven in run 29421569762).
+          # this replaced harden-runner: its block mode is a paid feature on private
+          # repos and silently downgrades to audit).
           #
           # 1) Resolve the allowlist to IPs while DNS is still open (pin, don't trust
           #    later re-resolution). Author-job allowlist: the inference endpoint +
@@ -278,7 +277,7 @@ jobs:
           #    agent must keep reaching the Actions service to stream logs / report step
           #    results, or the job is marked lost. GitHub-owned (Azure) ranges. The
           #    genuinely-untrusted process (opencode) is separately Landlock-confined to
-          #    the inference endpoint (mallcoppro-6c4), so it cannot use this surface —
+          #    the inference endpoint, so it cannot use this surface —
           #    documented residual of a coarse IP jail that cannot distinguish processes.
           ACTIONS=$(curl -sS --max-time 15 https://api.github.com/meta \
             | python3 -c 'import sys,json;print("\n".join(c for c in json.load(sys.stdin).get("actions",[]) if ":" not in c))')
@@ -313,7 +312,7 @@ jobs:
           #    (most robust); nothing in the job can regain root after this line.
           sudo chmod 0000 "$(command -v sudo)"
           echo "jail: applied (default-deny egress) + sudo destroyed."
-      - name: verify egress jail (fail-closed live proof — blocked + reachable + sudo dead)   # mallcoppro-6c4 / mallcoppro-d9d
+      - name: verify egress jail (fail-closed live proof — blocked + reachable + sudo dead)
         env:
           BASE_URL: ${{ inputs.base_url }}
         run: |
@@ -322,7 +321,7 @@ jobs:
           # outside the allowlist, (2) still reaches the inference endpoint, and (3) has
           # DESTROYED sudo so the jail cannot be lifted from within. This is the coarse
           # HOST layer; the fine, OS-enforced per-process layer is the Landlock jail
-          # mallcop-ops applies to the opencode child (mallcoppro-6c4). FAIL-CLOSED: if
+          # mallcop-ops applies to the opencode child. FAIL-CLOSED: if
           # ANY of the three assertions fails we exit non-zero and author NOTHING rather
           # than run under a jail we could not prove.
           echo "egress-jail: planting a disallowed call to https://example.com ..."
@@ -360,23 +359,25 @@ jobs:
           # half-configure into an uncapped run.
           #
           # Both rails run through BYOI mode (endpoint+key), which SKIPS the stream
-          # shim by default. The donut-byoi endpoint is mallcop.app — Forge-fronted,
-          # so it hard-501s opencode's unconditional streaming. --stream-shim fronts
-          # it with the loopback stream→non-stream bridge. A true byoi endpoint (real
-          # Anthropic) streams natively, so it leaves the shim off.
+          # shim by default. The donut-byoi endpoint is mallcop.app — the mallcop
+          # inference endpoint is non-streaming, so it hard-501s opencode's
+          # unconditional streaming. --stream-shim fronts it with the loopback
+          # stream→non-stream bridge. A true byoi endpoint (real Anthropic) streams
+          # natively, so it leaves the shim off.
           if [ "${{ inputs.rail }}" = "byoi" ]; then
             # A true BYOI endpoint (e.g. real Anthropic) streams natively and its
             # own strong model authors; leave the shim off and don't override.
             RAIL_ARGS=(--inference-url "$INFERENCE_URL" --inference-key-env INFERENCE_KEY)
           else
-            # donut-byoi: base_url is mallcop.app — Forge-fronted (non-streaming), so
-            # --stream-shim bridges opencode's unconditional streaming; and it
-            # recognizes catalog ids, so pin the STRONG Go-capable coder explicitly
-            # (the bare heal lane resolves to a flash model that plans but never writes).
+            # donut-byoi: base_url is mallcop.app — the mallcop inference endpoint is
+            # non-streaming, so --stream-shim bridges opencode's unconditional
+            # streaming; and it recognizes catalog ids, so pin the STRONG Go-capable
+            # coder explicitly (the bare heal lane resolves to a flash model that plans
+            # but never writes).
             RAIL_ARGS=(--inference-url "${{ inputs.base_url }}" --inference-key-env INFERENCE_KEY --stream-shim --code-model glm-5.2@deepinfra)
           fi
           # --exam-repo grades a customer-shaped target (no in-tree cmd/mallcop)
-          # against the reference tree checked out at _exam (mallcoppro-364). It is
+          # against the reference tree checked out at _exam. It is
           # ignored when the target ships its own cmd/mallcop, so it is always safe.
           # Capture stdout+stderr so the exam-repo/gate outcome is recoverable even if
           # the runner's blob log upload is throttled by the jail (the evidence step
@@ -392,7 +393,7 @@ jobs:
             --artifact-dir "$RUNNER_TEMP/proposals" \
             --budget-usd "${{ inputs.budget_usd }}" \
             --validate-bin mallcop 2>&1 | tee "$RUNNER_TEMP/selfext-drive.log"
-      - name: surface gate/exam outcome (mallcoppro-364 evidence; robust to blob-log loss)   # mallcoppro-d9d
+      - name: surface gate/exam outcome (robust to blob-log loss)
         if: always()
         run: |
           log="$RUNNER_TEMP/selfext-drive.log"
@@ -401,23 +402,23 @@ jobs:
             echo "### selfext CODE-lane authoring / gate outcome"
             echo ""
             echo "Terminal outcome + gate-stage lines below. A guard-stage rejection for want of a"
-            echo "reference tree (the mallcoppro-364 bug) would appear here; with --exam-repo supplied"
+            echo "reference tree (the exam-repo guard bug) would appear here; with --exam-repo supplied"
             echo "it must be ABSENT. (Redacted transcript/secrets are NOT on stdout — they live in the"
             echo "run artifact.)"
             echo '```'
             grep -iE 'PROPOSED|REJECTED|REFUSED|SKIPPED|FAILED|gate|stage|guard|four-layer|exam|reference|frozen|novel|corpus|customer-shaped' "$log" | tail -n 60 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: read autonomy dial (operator config file, never a workflow input)   # mallcoppro-101 (R3 + R5)
+      - name: read autonomy dial (operator config file, never a workflow input)
         id: autonomy
         if: steps.drive.outputs.proposed == 'true'
         run: |
           set -euo pipefail
           # The autonomy dial is OPERATOR-OWNED and read ONLY from the checked-out
           # repo's mallcop.yaml — a CODEOWNERS/guard-protected file the loop never
-          # writes (design R5). It is DELIBERATELY NOT a workflow input: no
+          # writes. It is DELIBERATELY NOT a workflow input: no
           # workflow_dispatch / workflow_call input carries autonomy, so a web-lane
-          # dispatch (POST /api/selfext) can never escalate it (R3 — the operator
+          # dispatch (POST /api/selfext) can never escalate it (the operator
           # owns their own blast radius). Fail-safe parse MIRRORS autonomy.Parse:
           # an absent file, an absent key, or ANY value other than the three known
           # spellings (non | semi | fully) => "non" — never a silent auto-apply.
@@ -448,7 +449,7 @@ jobs:
         # dial-gated auto-merge step below can target the PR it just opened (fail-safe:
         # if no number is emitted, auto-merge is withheld).
         run: bash _selfext/infra/open-proposal-pr.sh "$RUNNER_TEMP/proposals" "${{ inputs.consent }}"
-      - name: enable auto-merge — config dial=fully AND no novel gap (never bypasses the gate)   # mallcoppro-101
+      - name: enable auto-merge — config dial=fully AND no novel gap (never bypasses the gate)
         if: steps.drive.outputs.proposed == 'true' && steps.autonomy.outputs.dial == 'fully'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -465,7 +466,7 @@ jobs:
           #      novel_gap_families JSON field is non-empty, the reference corpus has
           #      ZERO labeled coverage for that family, so the gate cannot
           #      independently grade the detection — it ALWAYS waits for a human, even
-          #      at fully (mallcoppro-f95 BOTH ruling, part B). We parse the JSON
+          #      at fully. We parse the JSON
           #      FIELD from gate.json, never the free-text evidence string.
           #   2. The repo's REQUIRED check + branch protection: `gh pr merge --auto`
           #      does NOT merge now — it QUEUES the merge to happen iff the required
@@ -483,7 +484,7 @@ jobs:
           if [ "${novel}" = "true" ] || [ "${families:-0}" != "0" ]; then
             echo "selfext: novel-gap family present — leaving PR #${PR_NUMBER} for human review regardless of dial."
             gh pr comment "${PR_NUMBER}" --body \
-              "Auto-merge withheld despite \`learning.autonomy: fully\`: this GREEN proposal declares a **novel-gap** finding family with no labeled coverage in the reference corpus, so the gate cannot independently grade its detection. A human must review and merge it. (mallcoppro-f95 BOTH ruling / design R3.)" || true
+              "Auto-merge withheld despite \`learning.autonomy: fully\`: this GREEN proposal declares a **novel-gap** finding family with no labeled coverage in the reference corpus, so the gate cannot independently grade its detection. A human must review and merge it." || true
             exit 0
           fi
           # Clean widen at fully with no novel gap → queue auto-merge under the
@@ -492,7 +493,7 @@ jobs:
           echo "selfext: dial=fully, no novel gap → auto-merge queued (still gated on the required exam check)."
 
   contribute_back:
-    # CODE-lane contribute-back (rd mallcoppro-59e). Runs ONLY on a follow-up
+    # CODE-lane contribute-back. Runs ONLY on a follow-up
     # dispatch that names an already-merged authored detector to promote upstream
     # (inputs.promote_detector != ''). Proposes a merged customer detectors/<name>/
     # for promotion into the shared OSS core/detect/authored/<name>/.
@@ -502,17 +503,17 @@ jobs:
     #      read from the checkout with the SAME fail-safe grep-strict parse as the
     #      autonomy dial (absent file / absent key / any non-"true" value => off). It
     #      is DELIBERATELY not a workflow input, so a web-lane dispatch can never turn
-    #      it on (R3 + R5). promote_detector selects WHICH detector, never consent.
+    #      it on. promote_detector selects WHICH detector, never consent.
     #   2. OPERATOR CREDENTIAL, NOT MALLCOP-PRO'S: the upstream PR is opened under the
     #      operator's OWN token (secrets.oss_contrib_token, a secret THEY set in THEIR
-    #      repo). mallcop-pro's server holds NO OSS write credential, ever (R8). Absent
+    #      repo). mallcop-pro's server holds NO OSS write credential, ever. Absent
     #      token => fail-safe skip.
     #   3. NEVER MERGES: this job calls NO `gh pr merge` of any kind — the shared OSS
     #      repo's OWN exam.yml + CODEOWNERS review gate the merge, categorically outside
-    #      this job's hands at every autonomy dial (R3). A template lint (gharuntime's
+    #      this job's hands at every autonomy dial. A template lint (gharuntime's
     #      TestContributeBackJobNeverMerges) asserts this by construction.
     #
-    # EGRESS RULING d9d (mallcoppro-10e → mallcoppro-d9d): like the author job, this job
+    # EGRESS HARDENING: like the author job, this job
     # no longer runs in the pinned container, and no longer uses harden-runner (its block
     # mode is a paid feature on private repos). It runs NO model-driven code — only
     # trusted git/gh + the operator-identity opener script — so it needs no toolchain
@@ -530,10 +531,10 @@ jobs:
     steps:
       # ---- PRE-JAIL: pinned checkouts only (NO model-driven code) ----
       - name: checkout the operator repo (default branch — where a MERGED authored detector lives)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA (mallcoppro-7ee7)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           fetch-depth: 0
-      - name: checkout this reusable workflow's own repo (contribute-back PR opener)   # mallcoppro-10e
+      - name: checkout this reusable workflow's own repo (contribute-back PR opener)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           repository: mallcop-app/selfext
@@ -541,7 +542,7 @@ jobs:
           path: _selfext
           fetch-depth: 1
       # ==== JAIL BOUNDARY: self-enforced egress default-deny + sudo lockdown (github-only) ====
-      - name: apply self-enforced egress jail + destroy sudo (github-only)   # mallcoppro-d9d (option iii)
+      - name: apply self-enforced egress jail + destroy sudo (github-only)
         run: |
           set -euo pipefail
           # Hand-rolled iptables default-DENY egress (no harden-runner / StepSecurity —
@@ -591,22 +592,22 @@ jobs:
           if sudo -n true 2>/dev/null; then echo "FATAL: sudo still works — jail can be lifted" >&2; exit 1; fi
           if curl -sS --max-time 8 -o /dev/null https://example.com; then echo "FATAL: egress not enforced" >&2; exit 1; fi
           echo "jail: applied + proven (sudo dead, disallowed egress blocked)."
-      - name: gate on contribute_back consent (operator config file, never a workflow input)   # mallcoppro-59e (R3 + R5)
+      - name: gate on contribute_back consent (operator config file, never a workflow input)
         id: consent
         run: |
           set -euo pipefail
           # Fail-safe grep-strict, MIRRORING the autonomy dial step: an absent file,
           # an absent learning.contribute_back key, or ANY value other than a literal
           # true => off. Consent is OPERATOR-OWNED (mallcop.yaml, guard/CODEOWNERS-
-          # protected, R5); it is NEVER a workflow input, so a web-lane dispatch can
-          # never turn it on (R3 — the operator owns their own blast radius).
+          # protected); it is NEVER a workflow input, so a web-lane dispatch can
+          # never turn it on (the operator owns their own blast radius).
           cb=off
           if [ -f mallcop.yaml ]; then
             # Read contribute_back ONLY from the top-level `learning:` block. The config
             # has TWO contribute_back knobs — learning.contribute_back (THIS: the CODE-lane
             # consent gate) and sovereignty.contribute_back (a distinct flag) — and a bare
             # `grep contribute_back | head -n1` matched EITHER, so setting the sovereignty
-            # knob could silently flip CODE-lane consent (mallcoppro-559). This awk state
+            # knob could silently flip CODE-lane consent. This awk state
             # machine enters on a top-level `learning:` line and exits at the next
             # top-level key, so only learning's own contribute_back is ever read.
             raw=$(awk '
@@ -636,7 +637,7 @@ jobs:
           fi
           echo "selfext: ${det} present — the authoring PR merged; eligible to contribute back."
           echo "ok=true" >> "$GITHUB_OUTPUT"
-      - name: open upstream OSS review PR (operator token — NEVER merges)   # mallcoppro-59e (R3 + R8)
+      - name: open upstream OSS review PR (operator token — NEVER merges)
         if: steps.consent.outputs.cb == 'on' && steps.merged.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.oss_contrib_token }}
@@ -644,7 +645,7 @@ jobs:
           DETECTOR: ${{ inputs.promote_detector }}
         run: |
           set -euo pipefail
-          # mallcop-pro's SERVER holds no OSS write credential (R8). This PR is opened
+          # mallcop-pro's SERVER holds no OSS write credential. This PR is opened
           # under the OPERATOR's OWN token — a secret THEY set in THEIR repo. Absent
           # token => fail-safe skip (mallcop-pro never supplies one).
           if [ -z "${GH_TOKEN:-}" ]; then
@@ -652,14 +653,14 @@ jobs:
             # detector to promote — but no OSS_CONTRIB_TOKEN secret is set, so there is no
             # credential to open the upstream PR. This USED to exit with one stdout line that
             # died in the run log, so the operator believed they had contributed when they
-            # had not (mallcoppro-2ffb). Now it surfaces LOUDLY — a warning annotation plus a
+            # had not. Now it surfaces LOUDLY — a warning annotation plus a
             # step-summary carrying the exact 2-minute fix — in the run's Annotations/Summary
             # where the operator actually looks, at the one moment the guidance is relevant.
             echo "::warning title=OSS contribute-back skipped — no token::You enabled learning.contribute_back but no OSS_CONTRIB_TOKEN secret is set, so '${DETECTOR}' was NOT proposed upstream. See the job summary for the fix."
             {
               echo "## ⚠️ OSS contribute-back skipped — no token"
               echo ""
-              echo "You set \`learning.contribute_back: true\` and asked to promote **\`${DETECTOR}\`** upstream, but this repo has no **\`OSS_CONTRIB_TOKEN\`** secret, so mallcop had no credential to open the review PR. Your detector was **not** contributed. mallcop never supplies this token — the upstream PR is opened under *your own* identity (design R8), so it must be a token *you* control."
+              echo "You set \`learning.contribute_back: true\` and asked to promote **\`${DETECTOR}\`** upstream, but this repo has no **\`OSS_CONTRIB_TOKEN\`** secret, so mallcop had no credential to open the review PR. Your detector was **not** contributed. mallcop never supplies this token — the upstream PR is opened under *your own* identity, so it must be a token *you* control."
               echo ""
               echo "### Fix it (about 2 minutes)"
               echo ""
@@ -681,5 +682,5 @@ jobs:
           # branch (contribback/authored-<name> => idempotent: one open PR per detector)
           # and opens a REVIEW PR to the shared OSS repo under the operator's OWN token.
           # It calls NO `gh pr merge` — the OSS repo's own exam.yml + CODEOWNERS review
-          # gate the merge, at every dial (R3/R8).
+          # gate the merge, at every dial.
           bash _selfext/infra/open-contribback-code-pr.sh "${DETECTOR}" "${OSS_REPO}"
