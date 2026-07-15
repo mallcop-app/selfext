@@ -133,7 +133,7 @@ env:
   GO_VERSION: "1.25"
   NODE_VERSION: "24"
   OPENCODE_VERSION: "1.17.11"
-  MALLCOP_OPS_VERSION: "ops-v0.1.1"
+  MALLCOP_OPS_VERSION: "ops-v0.1.2"
   MALLCOP_VERSION: "v0.9.3"
 
 jobs:
@@ -200,22 +200,19 @@ jobs:
         run: |
           set -euo pipefail
           # SHA-256-verified public downloads, fail-closed on mismatch — the integrity
-          # guarantee that replaces the image digest. mallcop-ops carries the bundled
-          # config the loop reads via --config-dir; mallcop is the trusted gate binary
-          # (`--validate-bin mallcop`). Install to a workspace-independent bin dir added
-          # to $GITHUB_PATH so later steps resolve them on PATH (as /usr/local/bin did
-          # in the image).
+          # guarantee that replaces the image digest. mallcop-ops is the self-extension
+          # engine; mallcop is the trusted gate binary (`--validate-bin mallcop`). Install
+          # to a workspace-independent bin dir added to $GITHUB_PATH so later steps resolve
+          # them on PATH (as /usr/local/bin did in the image).
           BIN="$RUNNER_TEMP/mallcop-bin"
-          CFG="$RUNNER_TEMP/mallcop-config"
-          mkdir -p "$BIN" "$CFG"
+          mkdir -p "$BIN"
           cd "$RUNNER_TEMP"
-          # mallcop-ops (this repo's public release) — binary + bundled config.
+          # mallcop-ops (this repo's public release) — the self-extension binary.
           curl -fsSLO "https://github.com/mallcop-app/selfext/releases/download/${MALLCOP_OPS_VERSION}/mallcop-ops-linux-amd64.tar.gz"
           curl -fsSLO "https://github.com/mallcop-app/selfext/releases/download/${MALLCOP_OPS_VERSION}/mallcop-ops-linux-amd64.tar.gz.sha256"
           sha256sum -c mallcop-ops-linux-amd64.tar.gz.sha256
           tar -xzf mallcop-ops-linux-amd64.tar.gz
           install -m0755 mallcop-ops-linux-amd64/bin/mallcop-ops "$BIN/mallcop-ops"
-          cp -r mallcop-ops-linux-amd64/config/. "$CFG/"
           # mallcop gate binary (public OSS release) — same tag as the exam tree.
           curl -fsSLO "https://github.com/mallcop-app/mallcop/releases/download/${MALLCOP_VERSION}/mallcop-linux-amd64.tar.gz"
           curl -fsSLO "https://github.com/mallcop-app/mallcop/releases/download/${MALLCOP_VERSION}/mallcop-linux-amd64.tar.gz.sha256"
@@ -223,7 +220,6 @@ jobs:
           tar -xzf mallcop-linux-amd64.tar.gz
           install -m0755 bin/mallcop "$BIN/mallcop"
           echo "$BIN" >> "$GITHUB_PATH"
-          echo "MALLCOP_CONFIG_DIR=$CFG" >> "$GITHUB_ENV"
           "$BIN/mallcop-ops" selfext -h >/dev/null 2>&1 || true
           "$BIN/mallcop" --version 2>/dev/null || true
           command -v jq >/dev/null || { echo "FATAL: jq missing from the runner" >&2; exit 1; }
@@ -385,7 +381,6 @@ jobs:
           mallcop-ops selfext --run \
             --target-repo "$GITHUB_WORKSPACE" --base-ref HEAD \
             --exam-repo "$GITHUB_WORKSPACE/_exam" \
-            --config-dir "$MALLCOP_CONFIG_DIR" \
             --detector-id "${{ inputs.detector_id }}" \
             --event-type "${{ inputs.event_type }}" \
             --target-family "${{ inputs.target_family }}" \
