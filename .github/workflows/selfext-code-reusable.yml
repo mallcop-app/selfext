@@ -602,8 +602,17 @@ jobs:
           # never turn it on (R3 — the operator owns their own blast radius).
           cb=off
           if [ -f mallcop.yaml ]; then
-            raw=$(grep -E '^[[:space:]]+contribute_back:[[:space:]]*"?(true|false)"?[[:space:]]*(#.*)?$' mallcop.yaml \
-                    | head -n1 | sed -E 's/^[[:space:]]+contribute_back:[[:space:]]*"?([a-z]+)"?.*$/\1/' || true)
+            # Read contribute_back ONLY from the top-level `learning:` block. The config
+            # has TWO contribute_back knobs — learning.contribute_back (THIS: the CODE-lane
+            # consent gate) and sovereignty.contribute_back (a distinct flag) — and a bare
+            # `grep contribute_back | head -n1` matched EITHER, so setting the sovereignty
+            # knob could silently flip CODE-lane consent (mallcoppro-559). This awk state
+            # machine enters on a top-level `learning:` line and exits at the next
+            # top-level key, so only learning's own contribute_back is ever read.
+            raw=$(awk '
+              /^[^[:space:]#]/ { inlearning = ($1 == "learning:") }
+              inlearning && $1 == "contribute_back:" { v=$2; gsub(/["'\'']/, "", v); print v; exit }
+            ' mallcop.yaml || true)
             case "$raw" in
               true) cb=on  ;;
               *)    cb=off ;;   # false / unknown / absent => fail-safe off
@@ -639,7 +648,31 @@ jobs:
           # under the OPERATOR's OWN token — a secret THEY set in THEIR repo. Absent
           # token => fail-safe skip (mallcop-pro never supplies one).
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "selfext: no operator OSS contribute-back token (secrets.oss_contrib_token) — skipping (fail-safe)."
+            # The operator EXPLICITLY opted in (learning.contribute_back: true) AND named a
+            # detector to promote — but no OSS_CONTRIB_TOKEN secret is set, so there is no
+            # credential to open the upstream PR. This USED to exit with one stdout line that
+            # died in the run log, so the operator believed they had contributed when they
+            # had not (mallcoppro-2ffb). Now it surfaces LOUDLY — a warning annotation plus a
+            # step-summary carrying the exact 2-minute fix — in the run's Annotations/Summary
+            # where the operator actually looks, at the one moment the guidance is relevant.
+            echo "::warning title=OSS contribute-back skipped — no token::You enabled learning.contribute_back but no OSS_CONTRIB_TOKEN secret is set, so '${DETECTOR}' was NOT proposed upstream. See the job summary for the fix."
+            {
+              echo "## ⚠️ OSS contribute-back skipped — no token"
+              echo ""
+              echo "You set \`learning.contribute_back: true\` and asked to promote **\`${DETECTOR}\`** upstream, but this repo has no **\`OSS_CONTRIB_TOKEN\`** secret, so mallcop had no credential to open the review PR. Your detector was **not** contributed. mallcop never supplies this token — the upstream PR is opened under *your own* identity (design R8), so it must be a token *you* control."
+              echo ""
+              echo "### Fix it (about 2 minutes)"
+              echo ""
+              echo "1. **Fork** the OSS repo \`${OSS_REPO}\` under the account whose token you'll use (the PR is opened from your fork)."
+              echo "2. **Mint a token** for that account: a fine-grained PAT scoped to **only your fork**, with **Contents: read/write** + **Pull requests: read/write** (or a classic token with just \`public_repo\`). Least privilege — it never needs access to anything else."
+              echo "3. **Add it as a secret** on this repo:"
+              echo ""
+              echo '   ```bash'
+              echo "   gh secret set OSS_CONTRIB_TOKEN --repo <owner>/<this-repo>"
+              echo '   ```'
+              echo ""
+              echo "4. **Re-run** with the same \`promote_detector=${DETECTOR}\` to open the review PR. mallcop never merges it — the OSS repo's own review + CODEOWNERS gate that."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # open-contribback-code-pr.sh ships in THIS repo (infra/), fetched pre-jail
