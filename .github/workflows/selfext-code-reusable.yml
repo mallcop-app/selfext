@@ -161,7 +161,7 @@ jobs:
     # spends money re-authoring.
     if: inputs.promote_detector == ''
     runs-on: ubuntu-latest
-    timeout-minutes: 25            # HARD wall-clock money/egress backstop (pre-jail toolchain install adds a few min)
+    timeout-minutes: 60            # HARD wall-clock money/egress backstop. Sized for retry-until-write (mallcop#203): up to 3 authoring attempts x 15 min + pre-jail toolchain + in-runner gate.
     defaults:
       run:
         shell: bash               # `set -o pipefail` + the CODE_MODEL_ARGS bash array need bash
@@ -703,4 +703,5 @@ jobs:
           # It calls NO `gh pr merge` — the OSS repo's own exam.yml + CODEOWNERS review
           # gate the merge, at every dial.
           bash _selfext/infra/open-contribback-code-pr.sh "${DETECTOR}" "${OSS_REPO}"
+
 
