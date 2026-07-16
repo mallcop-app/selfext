@@ -152,7 +152,7 @@ env:
   # (the BYOK authoring driver — S3) AND the trusted gate binary
   # (`--validate-bin mallcop`). One binary, one pinned tag — no separate
   # mallcop-ops download on the BYOK lane.
-  MALLCOP_VERSION: "v0.9.3"
+  MALLCOP_VERSION: "v0.13.0"
 
 jobs:
   author:
@@ -190,7 +190,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — pinned by SHA
         with:
           repository: mallcop-app/mallcop
-          ref: ${{ env.MALLCOP_VERSION }}       # v0.9.3 → cmd/mallcop + exams/scenarios/corpus.pin, matching the pinned `mallcop` gate binary
+          ref: ${{ env.MALLCOP_VERSION }}       # v0.13.0 → cmd/mallcop + exams/scenarios/corpus.pin, matching the pinned `mallcop` gate binary
           path: _exam
           fetch-depth: 1
       - name: install Go toolchain (SHA-pinned; mirrors the runner image base golang:${GO_VERSION})
@@ -703,3 +703,4 @@ jobs:
           # It calls NO `gh pr merge` — the OSS repo's own exam.yml + CODEOWNERS review
           # gate the merge, at every dial.
           bash _selfext/infra/open-contribback-code-pr.sh "${DETECTOR}" "${OSS_REPO}"
+
