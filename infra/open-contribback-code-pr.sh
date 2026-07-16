@@ -3,11 +3,11 @@
 # ALREADY-MERGED customer-authored detector (detectors/<name>/) into the shared
 # OSS corpus (core/detect/authored/<name>/) as a REVIEW-ONLY upstream PR under the
 # OPERATOR's OWN token. It is the runtime sibling of open-proposal-pr.sh and the
-# shell twin of internal/selfext/contribback (LoadCodeArtifact / ossDestFor).
+# shell twin of the OSS selfext/contribback package (LoadCodeArtifact / ossDestFor).
 #
 # HARD LINES (mirroring the reusable workflow's contribute_back job, R3/R8):
 #   - It opens a PR to the shared OSS repo from the operator's OWN fork/identity
-#     (secrets.oss_contrib_token) — mallcop-pro holds no OSS write credential.
+#     (secrets.oss_contrib_token) — the operator holds no OSS write credential.
 #   - It NEVER merges: NO `gh pr merge` of any kind. The OSS repo's OWN exam.yml +
 #     CODEOWNERS review gate the merge, at every autonomy dial.
 #   - The head branch is DETERMINISTIC (contribback/authored-<name>): a re-run

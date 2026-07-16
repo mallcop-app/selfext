@@ -3,7 +3,7 @@
 # review PR under the OPERATOR's identity (the native GITHUB_TOKEN). It opens NO
 # PR on RED (there is no artifact), NEVER calls `gh pr merge`, and NEVER pushes to
 # a default branch — it pushes a `selfext/proposal-*` branch in the operator's own
-# fork and opens a PR against that fork's default branch (W4, rd mallcoppro-98e).
+# fork and opens a PR against that fork's default branch.
 #
 # Usage: open-proposal-pr.sh <artifact-dir> <consent>
 #   <artifact-dir>  the engine's --artifact-dir; the GREEN artifact is the single
@@ -57,7 +57,7 @@ BODY_FILE="$(mktemp)"
   echo "The self-extension **code lane** authored this detector and it passed the"
   echo "in-runner gate (guard → four-layer → exam-detect monotonic-widen). It is"
   echo "**not** auto-merged; the required \`selfext authored-change guard\` check and a"
-  echo "code-owner review gate it (rd mallcoppro-71c)."
+  echo "code-owner review gate it."
   echo
   echo "- Detector: \`${DETECTOR}\`"
   echo "- Fingerprint: \`${FP}\`"
